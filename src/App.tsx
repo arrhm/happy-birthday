@@ -384,7 +384,7 @@ export default function App() {
     const audio = new Audio("music.mp3");
     audio.loop = true;
     audio.preload = "auto";
-    audio.volume = 0.5;
+    audio.volume = 0.2;
     backgroundAudioRef.current = audio;
     return () => {
       audio.pause();
