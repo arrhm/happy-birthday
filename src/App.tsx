@@ -384,6 +384,7 @@ export default function App() {
     const audio = new Audio("music.mp3");
     audio.loop = true;
     audio.preload = "auto";
+    audio.volume = 0.5;
     backgroundAudioRef.current = audio;
     return () => {
       audio.pause();
@@ -539,7 +540,7 @@ export default function App() {
         </div>
       </div>
       {hasAnimationCompleted && isCandleLit && (
-        <div className="hint-overlay">klik op space om de kaarsen uit te blazen</div>
+        <div className="hint-overlay">klik op space om de kaars uit te blazen</div>
       )}
       <Canvas
         gl={{ alpha: true }}
