@@ -356,7 +356,6 @@ function EnvironmentBackgroundController({
 
   useEffect(() => {
     if ("backgroundIntensity" in scene) {
-      // Cast required because older typings might not include backgroundIntensity yet.
       (scene as typeof scene & { backgroundIntensity: number }).backgroundIntensity =
         intensity;
     }
@@ -378,57 +377,87 @@ export default function App() {
   const [isCandleLit, setIsCandleLit] = useState(true);
   const [fireworksActive, setFireworksActive] = useState(false);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
-  const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Audio & Visualizer States
+  const [volume, setVolume] = useState(0.3); // Standaard op 30% volume gezet!
+  const [visualizerData, setVisualizerData] = useState<number[]>(new Array(8).fill(0));
+  
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     const audio = new Audio("music.mp3");
     audio.loop = true;
     audio.preload = "auto";
-    backgroundAudioRef.current = audio;
+    audio.volume = volume;
+    audioRef.current = audio;
+    
     return () => {
       audio.pause();
-      backgroundAudioRef.current = null;
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (audioContextRef.current) audioContextRef.current.close();
+      audioRef.current = null;
     };
   }, []);
 
+  // Volume aanpassen
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVolume = parseFloat(e.target.value);
+    setVolume(newVolume);
+    if (audioRef.current) {
+      audioRef.current.volume = newVolume;
+    }
+  };
+
+  // Setup Visualizer zodra muziek start
   const playBackgroundMusic = useCallback(() => {
-    const audio = backgroundAudioRef.current;
-    if (!audio) {
-      return;
+    const audio = audioRef.current;
+    if (!audio || !audio.paused) return;
+
+    // Initialiseer audio context voor visualizer
+    if (!audioContextRef.current) {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioContextClass();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 32; // Lekker klein voor 8 simpele balkjes
+      
+      const source = ctx.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(ctx.destination);
+      
+      audioContextRef.current = ctx;
+      analyserRef.current = analyser;
     }
-    if (!audio.paused) {
-      return;
-    }
-    audio.currentTime = 0;
-    void audio.play().catch(() => {
-      // ignore play errors (browser might block)
-    });
+
+    void audio.play().catch(() => {});
+
+    // Start de visualizer loop
+    const updateVisualizer = () => {
+      if (analyserRef.current) {
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+        // Neem de eerste 8 frequentiebalkjes
+        setVisualizerData(Array.from(dataArray.slice(0, 8)));
+      }
+      animationFrameRef.current = requestAnimationFrame(updateVisualizer);
+    };
+    updateVisualizer();
   }, []);
 
   const typingComplete = currentLineIndex >= TYPED_LINES.length;
   const typedLines = useMemo(() => {
-    if (TYPED_LINES.length === 0) {
-      return [""];
-    }
-
+    if (TYPED_LINES.length === 0) return [""];
     return TYPED_LINES.map((line, index) => {
-      if (typingComplete || index < currentLineIndex) {
-        return line;
-      }
-      if (index === currentLineIndex) {
-        return line.slice(0, Math.min(currentCharIndex, line.length));
-      }
+      if (typingComplete || index < currentLineIndex) return line;
+      if (index === currentLineIndex) return line.slice(0, Math.min(currentCharIndex, line.length));
       return "";
     });
   }, [currentCharIndex, currentLineIndex, typingComplete]);
 
-  const cursorLineIndex = typingComplete
-    ? Math.max(typedLines.length - 1, 0)
-    : currentLineIndex;
-  const cursorTargetIndex = Math.max(
-    Math.min(cursorLineIndex, typedLines.length - 1),
-    0
-  );
+  const cursorLineIndex = typingComplete ? Math.max(typedLines.length - 1, 0) : currentLineIndex;
+  const cursorTargetIndex = Math.max(Math.min(cursorLineIndex, typedLines.length - 1), 0);
 
   useEffect(() => {
     if (!hasStarted) {
@@ -443,9 +472,7 @@ export default function App() {
 
     if (typingComplete) {
       if (!sceneStarted) {
-        const handle = window.setTimeout(() => {
-          setSceneStarted(true);
-        }, POST_TYPING_SCENE_DELAY);
+        const handle = window.setTimeout(() => { setSceneStarted(true); }, POST_TYPING_SCENE_DELAY);
         return () => window.clearTimeout(handle);
       }
       return;
@@ -457,40 +484,29 @@ export default function App() {
         setCurrentCharIndex((prev) => prev + 1);
         return;
       }
-
       let nextLineIndex = currentLineIndex + 1;
-      while (
-        nextLineIndex < TYPED_LINES.length &&
-        TYPED_LINES[nextLineIndex].length === 0
-      ) {
+      while (nextLineIndex < TYPED_LINES.length && TYPED_LINES[nextLineIndex].length === 0) {
         nextLineIndex += 1;
       }
-
       setCurrentLineIndex(nextLineIndex);
       setCurrentCharIndex(0);
     }, TYPED_CHAR_DELAY);
 
     return () => window.clearTimeout(handle);
-  }, [
-    hasStarted,
-    currentCharIndex,
-    currentLineIndex,
-    typingComplete,
-    sceneStarted,
-  ]);
+  }, [hasStarted, currentCharIndex, currentLineIndex, typingComplete, sceneStarted]);
 
   useEffect(() => {
-    const handle = window.setInterval(() => {
-      setCursorVisible((prev) => !prev);
-    }, CURSOR_BLINK_INTERVAL);
+    const handle = window.setInterval(() => { setCursorVisible((prev) => !prev); }, CURSOR_BLINK_INTERVAL);
     return () => window.clearInterval(handle);
   }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" && event.key !== " ") {
-        return;
-      }
+      if (event.code !== "Space" && event.key !== " ") return;
+      
+      // Als ze in de volumeknop klikken, willen we niet dat spatie de kaars uitblaast
+      if (document.activeElement?.tagName === "INPUT") return;
+
       event.preventDefault();
       if (!hasStarted) {
         playBackgroundMusic();
@@ -515,38 +531,55 @@ export default function App() {
 
   return (
     <div className="App">
-      <div
-        className="background-overlay"
-        style={{ opacity: backgroundOpacity }}
-      >
+      {/* Audio Controls & Visualizer UI */}
+      {hasStarted && (
+        <div className="audio-panel">
+          <div className="visualizer">
+            {visualizerData.map((value, i) => (
+              <div
+                key={i}
+                className="vis-bar"
+                style={{ height: `${Math.max(4, value / 2.5)}px` }}
+              />
+            ))}
+          </div>
+          <div className="volume-controls">
+            <span className="volume-icon">🎵</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              onChange={handleVolumeChange}
+              className="volume-slider"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="background-overlay" style={{ opacity: backgroundOpacity }}>
         <div className="typed-text">
           {typedLines.map((line, index) => {
-            const showCursor =
-              cursorVisible &&
-              index === cursorTargetIndex &&
-              (!typingComplete || !sceneStarted);
+            const showCursor = cursorVisible && index === cursorTargetIndex && (!typingComplete || !sceneStarted);
             return (
               <span className="typed-line" key={`typed-line-${index}`}>
                 {line || "\u00a0"}
-                {showCursor && (
-                  <span aria-hidden="true" className="typed-cursor">
-                    _
-                  </span>
-                )}
+                {showCursor && <span aria-hidden="true" className="typed-cursor">_</span>}
               </span>
             );
           })}
         </div>
       </div>
+      
       {hasAnimationCompleted && isCandleLit && (
-        <div className="hint-overlay">klik op space om de kaarsen uit te blazen</div>
+        <div className="hint-overlay">klik op de spatiebalk om de kaars uit te blazen</div>
       )}
+      
       <Canvas
         gl={{ alpha: true }}
         style={{ background: "transparent" }}
-        onCreated={({ gl }) => {
-          gl.setClearColor("#000000", 0);
-        }}
+        onCreated={({ gl }) => { gl.setClearColor("#000000", 0); }}
       >
         <Suspense fallback={null}>
           <AnimatedScene
